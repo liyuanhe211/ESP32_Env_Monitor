@@ -10,8 +10,8 @@ A `ESP32` Micropython script to display temperature and humidity measured from 5
  - Flash-screen warning if temperature is out of range.
 
 ## Electrical connections
+The components are soldered to a prototyping board, illustrated below. The left part is an independent circuit for blinking LEDs with NE555P. The connection of this part to the ESP32 is only the 5V power lines. 
 <p align="center"><img src="https://user-images.githubusercontent.com/18537705/189532858-6f847828-7ec4-4595-93ca-2afe75395624.png" width="70%" height="70%" align="center"></img></p>
-The components are soldered to a prototyping board, illustrated above. 
 
  - `[5V]  - [LCD2004-VCC]`
  - `[3.3V]  - [AHT10-VCCs] - [Button_Pin1]`
