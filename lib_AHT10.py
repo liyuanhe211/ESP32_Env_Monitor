@@ -74,6 +74,19 @@ class AHT10:
         # print("status: "+hex(self._buf[0]))
         return self._buf[0]
 
+    def measure(self):
+        """
+        Measure both temperature and humidity
+        :return:
+        """
+        self._perform_measurement()
+        humidity = (self._buf[1] << 12) | (self._buf[2] << 4) | (self._buf[3] >> 4)
+        humidity = (humidity * 100) / 0x100000
+        temp = ((self._buf[3] & 0xF) << 16) | (self._buf[4] << 8) | self._buf[5]
+        temp = ((temp * 200.0) / 0x100000) - 50
+        return temp,humidity
+
+
     @property
     def relative_humidity(self):
         """The measured relative humidity in percent."""
