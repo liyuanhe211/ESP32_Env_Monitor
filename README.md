@@ -1,5 +1,5 @@
-# Temperature and Humidity Monitoring with `ESP32` + `LCD2004` + 5 * `AHT10`
-A `ESP32` Micropython script to display temperature and humidity measured from 5 `AHT10` probes to a `LCD2004` screen.
+# ESP32 Environment Monitor
+A `ESP32` Micropython script with 5 temperature/humidity sensors, CO2 sensor, and VOC sensor.
 
 ## Features
 <p align="center"><img src="https://user-images.githubusercontent.com/18537705/189532100-be7e42fc-0c2c-44f3-90f5-0855ee6ebf16.png" width="30%" height="30%" align="center"></img></p>
