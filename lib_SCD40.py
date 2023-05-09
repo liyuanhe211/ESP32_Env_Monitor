@@ -24,9 +24,9 @@ class SCD4X:
         self._crc_buffer = bytearray(2)
 
         # cached readings
-        self._temperature = None
-        self._relative_humidity = None
-        self._co2 = None
+        self._temperature = -1
+        self._relative_humidity = -1
+        self._co2 = -1
 
         self.stop_periodic_measurement()
 
@@ -36,17 +36,9 @@ class SCD4X:
         If failed, try again
         :return: (CO2, temp, humid)
         """
-        for i in range(10):
-            try:
-                if self.data_ready:
-                    self._read_data()
-                return self._co2,self._temperature,self._relative_humidity
-            except OSError as e:
-                print("Measuring failed:")
-                print(e)
-                time.sleep(0.5)
-        return -1,-1,-1
-
+        if self.data_ready:
+            self._read_data()
+            return self._co2,self._temperature,self._relative_humidity
 
     @property
     def co2(self):
