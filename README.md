@@ -1,5 +1,5 @@
 # ESP32 Environment Monitor
-A `ESP32` Micropython script with 5 temperature/humidity sensors, CO2 sensor, and VOC sensor.
+A `ESP32` Micropython script with 5 temperature/humidity sensors, a CO2 sensor, and a VOC sensor. The main use case is for animal enclosure for something like turtles, geckos, or other reptiles.
 
 ## Features
 <p align="center"><img src="https://user-images.githubusercontent.com/18537705/189532100-be7e42fc-0c2c-44f3-90f5-0855ee6ebf16.png" width="30%" height="30%" align="center"></img></p>
