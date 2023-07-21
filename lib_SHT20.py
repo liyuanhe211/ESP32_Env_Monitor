@@ -43,14 +43,14 @@ class SHT2x:
     def toTemperature(self, buf):
         if buf == False:
             print("CRC Error...\r\n")
-            return False
+            return -1
         else:
             return -46.85 + 175.72 * ((buf[0] << 8) + buf[1]) /2**16
 
     def toHumidity(self, buf):
         if buf == False:
             print("CRC Error...\r\n")
-            return False
+            return -1
         else:
             return -6 + 125.0 * ((buf[0] << 8) + buf[1]) / 2**16
 
@@ -88,35 +88,44 @@ class SHT2x:
         b[0] = command
 
         self.i2c.writeto(self.ADDR, b)
-
         if(bytesToRead > 0):
             recv = bytearray(bytesToRead)
-            retryCounter = 0
             done = False
-            while retryCounter < 15 and not done:
+            # print("SHT20Lib",3)
+            error = ""
+            for _ in range(10):
                 try:
                     self.i2c.readfrom_into(self.ADDR, recv)
                     done = True
-                    retryCounter = retryCounter + 1
-                except:
-                    time.sleep(0.01)
+                    break
+                except Exception as e:
+                    error = e
+                    time.sleep(0.05)
+            if not done:
+                print("SHT20Lib Failed:",error)
+                return False
             #print(hex(recv[0])+' '+hex(recv[1])+' '+hex(recv[2]))
             #print("\r\n")
+            # print("SHT20Lib",6)
             if (self.CheckCRC(recv) == recv[2]):
                 #print('success...\r\n')
                 pass
             else:
                 #print('Failed...')
                 return False
+            # print("SHT20Lib",7)
             return recv
 
     def getTemperature(self):
+        # if masureing failed, return -1,-1
         return self.toTemperature(self.runI2CCommand(self.CMD_READ_TEMPERATURE, 3))
 
     def getHumidity(self):
+        # if masureing failed, return -1,-1
         return self.toHumidity(self.runI2CCommand(self.CMD_READ_HUMIDITY, 3))
 
     def measure(self):
+        # if masureing failed, return -1,-1
         return self.getTemperature(),self.getHumidity()
 
     def getUserRegister(self):

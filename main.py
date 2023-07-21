@@ -1,258 +1,152 @@
 # -*- coding: utf-8 -*-
+
+# SCD40 CO2不能用，一直显示Exception "NoneType" object isn't iterable，应该是measure函数不对
+# 中途拔下SCD40会导致直接报错死机，应该修正
+
 __author__ = 'LiYuanhe'
 
-from machine import Pin, Signal
 import time
-import socket
-import machine
-import network
-import micropython
-from lib_AHT10 import AHT10
-from lib_lcd1602_2004_with_i2c import LCD
+
 import utime
-from machine import Pin, SoftI2C
-from lib_SCD40 import SCD4X
-from lib_SGP30 import SGP30
-from lib_SHT20 import SHT2x
-import os
+from machine import SoftI2C
 from lib_main import *
+from Secret import WIFI_SSID, WIFI_PASSWORD
 
 micropython.alloc_emergency_exception_buf(100)
 
-# A standard thermometer and humidity monitor with screen
-# Connection for ESP32
+LCD_SCL_PIN = 26
+LCD_SDA_PIN = 27
 
-# Connect a [Parallel to I2C Chip] to a LCD2004 screen
-# Just solder all pins sequentially to the screen, Direction: (pin towards [GND, VCC, SDA, SCL] pin connects to the VSS pin of the Screen
+FED_PUSHBUTTON_PIN = 35
+FED_PUSHBUTTON = Pin(FED_PUSHBUTTON_PIN, Pin.IN)
 
-# Connect [Parallel to I2C Chip] to ESP8266
-# GND - GND
-# VCC - VIN
-# SCL - 26
-# SDA - 27
-# Also
-# SDA - 10K resister - GND
-# SCL - 10K resister - GND
+WATER_PUSHBUTTON_PIN = 13
+WATER_PUSHBUTTON = Pin(WATER_PUSHBUTTON_PIN, Pin.IN)
 
+FED_TIMES_FILE = "feed_time_file.txt"
+MACHINE_FED_TIME, RTC_FED_TIME = read_times_file(FED_TIMES_FILE)
+log("Read fed time:", MACHINE_FED_TIME, RTC_FED_TIME)
+fed_time_is_RTC = False
 
-# Connect Five AHT10 chip to ESP32, without pull-up resister, using internal pull up resister
-# AHT10-A: SCL 19 SDA 22
-# AHT10-B: SCL 18 SDA 23
-# AHT10-C: SCL 16 SDA 17
-# AHT10-D: SCL 2 SDA 4
-# AHT10-E: SCL 32 SDA 33
-
-# Attach any SCD40 to any one of the AHT10 I2C channel (G-G, V-V, SCL-SCL, SDA-SDA)
-
-# Connect a Fed Pushbutton between 35 and 3V3, pull down 35 with 2k resister
-# Connect a Water Pushbutton between 13 and 3V3, pull down 13 with 2k resister
+WATER_TIMES_FILE = "water_time_file.txt"
+MACHINE_WATER_TIME, RTC_WATER_TIME = read_times_file(WATER_TIMES_FILE)
+log("Read water time:", MACHINE_WATER_TIME, RTC_WATER_TIME)
+water_time_is_RTC = False
 
 
-lcd_scl_pin = 26
-lcd_sda_pin = 27
+def get_time_since_feed_s():
+    global fed_time_is_RTC
+    if RTC_has_been_set() and RTC_FED_TIME:
+        fed_time_is_RTC = True
+        print("Calc feed RTC time:", rtc.datetime(), RTC_FED_TIME, mktime_from_RTC_datetime(rtc.datetime()), mktime_from_RTC_datetime(RTC_FED_TIME))
+        ret = mktime_from_RTC_datetime(rtc.datetime()) - mktime_from_RTC_datetime(RTC_FED_TIME)
+    else:
+        print("Calc feed machine time", get_current_time(), MACHINE_FED_TIME)
+        ret = get_current_time() - MACHINE_FED_TIME
 
-fed_pushbutton_pin = 35
-fed_pushbutton = Pin(fed_pushbutton_pin, Pin.IN)
-
-water_pushbutton_pin = 13
-water_pushbutton = Pin(water_pushbutton_pin, Pin.IN)
-
-### Fed time process ###
-
-last_feed_time_read = 0
-feed_times_file = "feed_time_file.txt"
-feed_times = open(feed_times_file).read()
-feed_times = feed_times.splitlines()
-if not feed_times:
-    feed_time = 0
-else:
-    feed_time = int(feed_times[-1])
-
-
-def read_time_since_feed():  # in seconds
-    global last_feed_time_read, feed_time, feed_times_file
-    if time.time() - last_feed_time_read > 60:  # 读这个很耗时，60秒读一次
-        current_feed_times = open(feed_times_file).read()
-        current_feed_times = current_feed_times.splitlines()
-        if not current_feed_times:
-            feed_time = 0
-        else:
-            feed_time = int(current_feed_times[-1])
-
-    ret = get_current_time() - feed_time
     if ret < 0:
-        print("Feed record error! Feed record error! Feed record error! Feed record error! Feed record error! ")
-        with open(feed_times_file, 'a') as feed_times_file_object:
+        log("Feed record error! Feed record error!")
+        log("Last line of fed_time_file:", open(FED_TIMES_FILE).readlines()[-1])
+        with open(FED_TIMES_FILE, 'a') as feed_times_file_object:
             feed_times_file_object.write(str(time.time()) + '\n')
-        ret = 0
-    # print("Last Feed Record:",get_current_time()-feed_time,get_current_time(),feed_time)
+        return 0
     return ret
 
 
 def feed_button_pressed():
-    print("feed_button_pressed Function")
-    global lcd, fed_pushbutton, feed_times_file
+    log("Enter feed_button_pressed Function")
     # 长按才有效
     for _ in range(10):
-        print(fed_pushbutton.value())
         time.sleep(0.02)
-        if fed_pushbutton.value() == 0:
+        if FED_PUSHBUTTON.value() == 0:
+            log("Abort feed_button_pressed")
             return False
-    # print('======================= New feed time:',get_current_time())
-    with open(feed_times_file, 'a') as feed_times_file_object:
-        feed_times_file_object.write(str(get_current_time()) + '\n')
-    # pushbutton = Pin(fed_pushbutton_pin, Pin.IN, pull=Pin.PULL_UP)
-    # pushbutton.irq(button_pressed,trigger=Pin.IRQ_FALLING)
-    lcd.puts("        Feed        ")
-    lcd.puts("      Received      ", 1)
-    lcd.puts("                    ", 2)
-    lcd.puts("      Rebooting     ", 3)
-    time.sleep(1.5)
-    # while True:
-    #     print("Water")
-    #     time.sleep_ms(100)
-    #     if time.time()-start_showing_time>3:
-    machine.reset()
 
+    lcd.puts("                    ")
+    lcd.puts("                    ", 1)
+    lcd.puts("   Feed Received    ", 2)
+    lcd.puts("     Rebooting      ", 3)
+
+    log("Hold Triggered feed_button_pressed")
+    set_RTC_time(lcd)
+    current_time_int = get_current_time()
+    current_RTC = rtc.datetime()
+
+    save_time_int_and_RTC_to_file(FED_TIMES_FILE, current_time_int, current_RTC, append=True)
+    log('New feed time:', current_time_int, current_RTC)
+
+    lcd.puts(center_align(time_string_from_RTC_time_tuple(current_RTC), 20), 1)
+
+    time.sleep(1.5)
+    machine.reset()
 
 
 ### Water time process ###
 
-last_water_time_read = 0
-water_times_file = "water_time_file.txt"
-water_times = open(water_times_file).read()
-water_times = water_times.splitlines()
-if not water_times:
-    water_time = 0
-else:
-    water_time = int(water_times[-1])
+def get_time_since_water_s():
+    global water_time_is_RTC
+    if RTC_has_been_set() and RTC_WATER_TIME:
+        water_time_is_RTC = True
+        print("Calc water RTC time:", rtc.datetime(), RTC_WATER_TIME, mktime_from_RTC_datetime(rtc.datetime()), mktime_from_RTC_datetime(RTC_WATER_TIME))
+        ret = mktime_from_RTC_datetime(rtc.datetime()) - mktime_from_RTC_datetime(RTC_WATER_TIME)
+    else:
+        print("Calc water machine time:", get_current_time(), MACHINE_WATER_TIME)
+        ret = get_current_time() - MACHINE_WATER_TIME
 
-
-def read_time_since_water():  # in seconds
-    global last_water_time_read, water_time, water_times_file
-    if time.time() - last_water_time_read > 60:  # 读这个很耗时，60秒读一次
-        current_water_times = open(water_times_file).read()
-        current_water_times = current_water_times.splitlines()
-        if not current_water_times:
-            water_time = 0
-        else:
-            water_time = int(current_water_times[-1])
-
-    ret = get_current_time() - water_time
     if ret < 0:
-        print("Water record error! Water record error! Water record error! Water record error! Water record error! ")
-        with open(water_times_file, 'a') as water_times_file_object:
+        log("Water record error! Water record error!")
+        log("Last line of water_time_file:", open(WATER_TIMES_FILE).readlines()[-1])
+        with open(WATER_TIMES_FILE, 'a') as water_times_file_object:
             water_times_file_object.write(str(time.time()) + '\n')
-        ret = 0
+        return 0
     return ret
 
 
 def water_button_pressed():
-    print("water_button_pressed Function")
-    global lcd, water_pushbutton, water_times_file
+    log("Enter water_button_pressed Function")
     # 长按才有效
     for _ in range(10):
-        print(water_pushbutton.value())
         time.sleep(0.02)
-        if water_pushbutton.value() == 0:
+        if WATER_PUSHBUTTON.value() == 0:
+            log("Abort water_button_pressed")
             return False
-    with open(water_times_file, 'a') as water_times_file_object:
-        water_times_file_object.write(str(get_current_time()) + '\n')
 
-    # start_showing_time = time.time()
+    log("Hold Triggered water_button_pressed")
 
-    lcd.puts("       Water        ")
-    lcd.puts("      Changed       ", 1)
-    lcd.puts("                    ", 2)
+    lcd.puts("                    ")
+    lcd.puts("                    ", 1)
+    lcd.puts("   Water Changed    ", 2)
     lcd.puts("     Rebooting      ", 3)
+
+    set_RTC_time(lcd)
+    current_time_int = get_current_time()
+    current_RTC = rtc.datetime()
+
+    save_time_int_and_RTC_to_file(WATER_TIMES_FILE, current_time_int, current_RTC, append=True)
+    log('New water time:', current_time_int, current_RTC)
+
     time.sleep(1.5)
-    # while True:
-    #     print("Water")
-    #     time.sleep_ms(100)
-    #     if time.time()-start_showing_time>3:
     machine.reset()
-
-
-def read_t_and_h(i2c_object):
-    """
-    Assume there is SHT20 or AHT10 attached on that i2c line, and do measurement on both
-    :param i2c_object:
-    :param ts:
-    :param hs:
-    :return:
-    if there is both SHT20 and AHT10, return ((SHT20-T, SHT20-H),(AHT10-T, AHT10-H))
-    if there not both present, fill with -1, e.g. ((-1,-1),(AHT10-T, AHT10-H))
-    """
-
-    AHT10_ADDR = 0x38
-    SHT20_ADDR = 0b1000000
-
-    devices = i2c_object.scan()
-    ret = [[-1,-1],[-1,-1]]
-
-    if SHT20_ADDR in devices:
-        try:
-            sht20 = SHT2x(i2c_object)
-            t,h = sht20.measure()
-            if h > 99:
-                h = 99
-            if t < 0:
-                t = -1
-            ret[0] = [t,h]
-        except Exception as e:
-            print("SHT20", e)
-    if AHT10_ADDR in devices:
-        try:
-            aht10 = AHT10(i2c_object)
-            t,h = aht10.measure()
-            if h > 99:
-                h = 99
-            if t < 0:
-                t = -1
-            ret[1] = [t,h]
-        except Exception as e:
-            print("AHT10", e)
-    return ret
-
-
-def find_SGP30_object(i2c_object_list):
-    """
-    Among a list of i2c_list, find which one has the SGP30 attached to
-    :param i2c_object_list:
-    :return:
-    """
-
-    for i2c in i2c_object_list:
-        devices = i2c.scan()
-        if 0x58 in devices:
-            return SGP30(i2c)
-
-def find_SCD40_object(i2c_object_list):
-    """
-    Among a list of i2c_list, find which one has the SCD40 attached to
-    :param i2c_object_list:
-    :return:
-    """
-
-    for i2c in i2c_object_list:
-        devices = i2c.scan()
-        if 0x62 in devices:
-            ret =SCD4X(i2c)
-            ret.start_periodic_measurement()
-            return ret
 
 
 ######################################
 
-lcd = LCD(SoftI2C(scl=Pin(lcd_scl_pin), sda=Pin(lcd_sda_pin), freq=100000))
-lcd.puts("                    ", )
-lcd.puts("     Voldemort      ", 1)
-lcd.puts("    Life Support    ", 2)
+def initiate_lcd():
+    lcd = LCD(SoftI2C(scl=Pin(LCD_SCL_PIN), sda=Pin(LCD_SDA_PIN), freq=100000))
+    lcd.puts("                    ", )
+    lcd.puts("     Voldemort      ", 1)
+    lcd.puts("    Life Support    ", 2)
+    for bar_char_count, bar_char in enumerate(custom_bar_chars):
+        lcd.create_character(bar_char_count, bar_char)
+    return lcd
 
-from lib_main import custom_bar_chars
 
-for count,i in enumerate(custom_bar_chars):
-    lcd.create_charactor(count,i)
+lcd = initiate_lcd()
+
+time.sleep(0.5)
+
+WIFI = connect_wifi(WIFI_SSID, WIFI_PASSWORD, lcd)
+set_RTC_time(lcd)
 
 # i2c-A: SCL 19 SDA 22
 # i2c-B: SCL 18 SDA 23
@@ -260,7 +154,7 @@ for count,i in enumerate(custom_bar_chars):
 # i2c-D: SCL 2 SDA 4
 # i2c-E: SCL 32 SDA 33
 
-#每一个i2c上连一个AHT10或者SHT20，如果存在，SHT20排在AHT10前面
+# 每一个i2c上连一个AHT10或者SHT20，如果存在，SHT20排在AHT10前面
 
 i2c_A = SoftI2C(scl=Pin(19, pull=Pin.PULL_UP), sda=Pin(22, pull=Pin.PULL_UP), freq=100000)
 utime.sleep(0.05)
@@ -283,7 +177,6 @@ cycle_time = 0.1  # refresh rate
 last_write_time = 0
 last_LCD_refresh = 0
 last_tick = 0
-last_reset_time = get_machine_reset_time()
 
 
 def main():
@@ -294,97 +187,106 @@ def main():
     SHT20_t_lists = [[] for _ in range(5)]
     SHT20_h_lists = [[] for _ in range(5)]
 
-    global cycle_time, cycle_count, fed_pushbutton, water_pushbutton, lcd
-    global last_write_time, last_LCD_refresh, last_tick, last_reset_time
-    global i2c_list, SCD40_object, SGP30_object
+    global cycle_time, cycle_count
+    global last_write_time, last_LCD_refresh, last_tick
+    global lcd, SCD40_object, SGP30_object
 
-    CO2, VOC = '-----', '-----' # CO2和VOC更新太快，每两个周期更新一次
+    CO2, VOC = '----', '----'  # CO2和VOC更新太快，每两个周期更新一次
     # fed_pushbutton.irq(button_pressed,trigger=Pin.IRQ_FALLING)
 
+    # html server
+    addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
+    s = socket.socket()
+    s.bind(addr)
+    s.listen(1)
+
     while True:
-        if fed_pushbutton.value() == 1:
+        print("-------------------------------------------------------")
+        if FED_PUSHBUTTON.value() == 1:
             feed_button_pressed()
-            lcd = LCD(SoftI2C(scl=Pin(lcd_scl_pin), sda=Pin(lcd_sda_pin), freq=100000))
+            lcd = initiate_lcd()
 
-        if water_pushbutton.value() == 1:
+        if WATER_PUSHBUTTON.value() == 1:
             water_button_pressed()
-            lcd = LCD(SoftI2C(scl=Pin(lcd_scl_pin), sda=Pin(lcd_sda_pin), freq=100000))
+            lcd = initiate_lcd()
 
+        # print(6)
         cycle_count += 1
-
         # 30秒备份一次时间，因为备份时间耗时几百毫秒，不能太频繁
-        if time.time() - last_write_time > 30:
+        if boot_time_s() - last_write_time > 30:
             write_current_time()
-            last_write_time = time.time()
+            last_write_time = boot_time_s()
 
         # 防止屏幕数据不全，600秒重置一次屏幕
-        if time.time() != last_LCD_refresh and time.time() % 600 == 1:
-            print("Screen reset")
-            last_LCD_refresh = time.time()
-            lcd = LCD(SoftI2C(scl=Pin(lcd_scl_pin), sda=Pin(lcd_sda_pin), freq=100000))
+        if boot_time_s() != last_LCD_refresh and boot_time_s() % 600 == 1:
+            log("Screen reset")
+            last_LCD_refresh = boot_time_s()
+            lcd = initiate_lcd()
 
-
-        for count,i2c_object in enumerate(i2c_list):
-            SHT20_t_h, AHT10_t_h =  read_t_and_h(i2c_object)
-            SHT20_t,SHT20_h = SHT20_t_h
-            AHT10_t,AHT10_h = AHT10_t_h
-            SHT20_t_lists[count].append(SHT20_t)
-            SHT20_h_lists[count].append(SHT20_h)
-            AHT10_t_lists[count].append(AHT10_t)
-            AHT10_h_lists[count].append(AHT10_h)
+        # print(7)
+        for i2c_count, i2c_object in enumerate(i2c_list):
+            # print("I2C:",i2c_count)
+            SHT20_t_h, AHT10_t_h = read_t_and_h(i2c_object)
+            SHT20_t, SHT20_h = SHT20_t_h
+            AHT10_t, AHT10_h = AHT10_t_h
+            SHT20_t_lists[i2c_count].append(SHT20_t)
+            SHT20_h_lists[i2c_count].append(SHT20_h)
+            AHT10_t_lists[i2c_count].append(AHT10_t)
+            AHT10_h_lists[i2c_count].append(AHT10_h)
             # 保留5个最后结果，如果短暂中断不影响显示
-            SHT20_t_lists[count] = SHT20_t_lists[count][-5:]
-            SHT20_h_lists[count] = SHT20_h_lists[count][-5:]
-            AHT10_t_lists[count] = AHT10_t_lists[count][-5:]
-            AHT10_h_lists[count] = AHT10_h_lists[count][-5:]
-
-
+            SHT20_t_lists[i2c_count] = SHT20_t_lists[i2c_count][-5:]
+            SHT20_h_lists[i2c_count] = SHT20_h_lists[i2c_count][-5:]
+            AHT10_t_lists[i2c_count] = AHT10_t_lists[i2c_count][-5:]
+            AHT10_h_lists[i2c_count] = AHT10_h_lists[i2c_count][-5:]
+        # print(8)
         # 从SGP30 读取VOC，因为SGP30的CO2质量很差，不要它的CO2
         if cycle_count % 2 == 0:
+            print("Measuring CO2, VOC")
             if not SGP30_object:
                 SGP30_object = find_SGP30_object(i2c_list)
             try:
                 CO2_dump, VOC = SGP30_object.indoor_air_quality
-                print("VOC:",CO2_dump, VOC)
+                print("VOC:", CO2_dump, VOC)
             except Exception as e:
-                print("\n\n\n", e, "\n\n\n")
+                log("SGP30 Exception", e, "\n")
                 SGP30_object = find_SGP30_object(i2c_list)
                 try:
                     CO2_dump, VOC = SGP30_object.indoor_air_quality
                 except Exception as e:
-                    print("\n\n\n", e, "\n\n\n")
+                    log("SGP30 Exception 2", e, "\n")
                     CO2_dump, VOC = -1, -1
 
+            if VOC > 9999:
+                VOC = 9999
+
             if VOC == -1:
-                VOC = '-----'
+                VOC = '----'
             else:
-                VOC = str(int(VOC)) + " " * (5 - len(str(int(VOC))))
+                VOC = str(int(VOC)) + " " * (4 - len(str(int(VOC))))
 
-            if cycle_count<24: #前15秒没有信号
-                VOC = "init "
+            if cycle_count < 24:  # 前15秒没有信号
+                VOC = "init"
 
-
-        if cycle_count % 2 == 0:
             if not SCD40_object:
                 SCD40_object = find_SCD40_object(i2c_list)
             try:
                 CO2, CO2_Temp, CO2_Humid = SCD40_object.measure()
-                print("CO2:",CO2, CO2_Temp, CO2_Humid)
+                print("CO2:", CO2, CO2_Temp, CO2_Humid)
             except Exception as e:
-                print("\n\n\n", e, "\n\n\n")
+                print("SCD40 Exception", e, "\n")
                 SCD40_object = find_SCD40_object(i2c_list)
                 try:
                     CO2, CO2_Temp, CO2_Humid = SCD40_object.measure()
                 except Exception as e:
-                    print("\n\n\n", e, "\n\n\n")
+                    print("SCD40 Exception 2", e, "\n")
                     CO2, CO2_Temp, CO2_Humid = -1, -1, -1
 
             if CO2 == -1:
-                CO2 = '-----'
+                CO2 = '----'
             elif CO2 <= 400:
-                CO2 = 'low  '
+                CO2 = 'low '
             else:
-                CO2 = str(int(CO2)) + " " * (5 - len(str(int(CO2))))
+                CO2 = str(int(CO2)) + " " * (4 - len(str(int(CO2))))
 
             # CO2_Temp = str(int(CO2_Temp))
             # CO2_Humid = str(int(CO2_Humid)) if CO2_Humid<100 else "99"
@@ -402,114 +304,158 @@ def main():
             #     CO2 = "init "
             #     Cor = "init "
 
-        # print(2, time.ticks_ms())
+        # print(10)
 
+        # log(2, time.ticks_ms())
         SHT20_t_results = [interpret_list(x) for x in SHT20_t_lists]
         SHT20_h_results = [interpret_list(x) for x in SHT20_h_lists]
         AHT10_t_results = [interpret_list(x) for x in AHT10_t_lists]
         AHT10_h_results = [interpret_list(x) for x in AHT10_h_lists]
 
-        print("SHT20_t",SHT20_t_results)
-        print("SHT20_h",SHT20_h_results)
-        print("AHT10_t",AHT10_t_results)
-        print("AHT10_h",AHT10_h_results)
+        print("SHT20_t", [int(x * 10) / 10 for x in SHT20_t_results], "SHT20_h", [int(x * 10) / 10 for x in SHT20_h_results])
+        print("AHT10_t", [int(x * 10) / 10 for x in AHT10_t_results], "AHT10_h", [int(x * 10) / 10 for x in AHT10_h_results])
 
         # 一共最多10个结果[SHT1,AHT1,SHT2,AHT2...]，选其中五个显示
-        ret_t = [-1,-1,-1,-1,-1]
-        ret_h = [-1,-1,-1,-1,-1]
-        ret_marker = [False,False,False,False,False] # 用于记录该结果是不是SHT20带来的，如果是，为True
+        ret_t = [-1, -1, -1, -1, -1]
+        ret_h = [-1, -1, -1, -1, -1]
+        ret_marker = [False, False, False, False, False]  # 用于记录该结果是不是SHT20带来的，如果是，为True
 
         # 如果结果中的某位置有至少一个结果，填进去
         for i in range(5):
-            if SHT20_t_results[i]!=-1:
-                ret_marker[i]=True
+            if SHT20_t_results[i] != -1:
+                ret_marker[i] = True
                 ret_t[i] = SHT20_t_results[i]
                 ret_h[i] = SHT20_h_results[i]
                 SHT20_t_results[i] = -1
                 SHT20_h_results[i] = -1
                 ret_marker[i] = True
-            elif AHT10_t_results[i]!=-1:
+            elif AHT10_t_results[i] != -1:
                 ret_t[i] = AHT10_t_results[i]
                 ret_h[i] = AHT10_h_results[i]
                 AHT10_t_results[i] = -1
                 AHT10_h_results[i] = -1
         # 如果没有，看看两边有没有多的给匀一匀，优先找前面的，此时SHT20的结果必然被用光，只可能是AHT10的结果
         for i in range(5):
-            if ret_t[i]==-1:
-                if i>0 and AHT10_t_results[i-1]!=-1:
-                    ret_t[i] = AHT10_t_results[i-1]
-                    ret_h[i] = AHT10_h_results[i-1]
-                    AHT10_t_results[i-1] = -1
-                    AHT10_h_results[i-1] = -1
-                elif i<4 and AHT10_t_results[i+1]!=-1:
-                    ret_t[i] = AHT10_t_results[i+1]
-                    ret_h[i] = AHT10_h_results[i+1]
-                    AHT10_t_results[i+1] = -1
-                    AHT10_h_results[i+1] = -1
+            if ret_t[i] == -1:
+                if i > 0 and AHT10_t_results[i - 1] != -1:
+                    ret_t[i] = AHT10_t_results[i - 1]
+                    ret_h[i] = AHT10_h_results[i - 1]
+                    AHT10_t_results[i - 1] = -1
+                    AHT10_h_results[i - 1] = -1
+                elif i < 4 and AHT10_t_results[i + 1] != -1:
+                    ret_t[i] = AHT10_t_results[i + 1]
+                    ret_h[i] = AHT10_h_results[i + 1]
+                    AHT10_t_results[i + 1] = -1
+                    AHT10_h_results[i + 1] = -1
 
-        # print(3, time.ticks_ms())
+        # log(3, time.ticks_ms())
         t1, t2, t3, t4, t5 = ret_t
         h1, h2, h3, h4, h5 = ret_h
-        line1 = "%i %i %i %i %i %s%s%s%s%s" % (t1, t2, t3, t4, t5, t_to_bar(t1), t_to_bar(t2), t_to_bar(t3), t_to_bar(t4), t_to_bar(t5))
+        line1 = "%s %s %s %s %s %s%s%s%s%s" % (two_digis(t1), two_digis(t2), two_digis(t3), two_digis(t4), two_digis(t5),
+                                               t_to_bar(t1), t_to_bar(t2), t_to_bar(t3), t_to_bar(t4), t_to_bar(t5))
         line1 = line1.replace('-1', '--')
-        line2 = "%i %i %i %i %i %s%s%s%s%s" % (h1, h2, h3, h4, h5, h_to_bar(h1), h_to_bar(h2), h_to_bar(h3), h_to_bar(h4), h_to_bar(h5))
+        line2 = "%s %s %s %s %s %s%s%s%s%s" % (two_digis(h1), two_digis(h2), two_digis(h3), two_digis(h4), two_digis(h5),
+                                               h_to_bar(h1), h_to_bar(h2), h_to_bar(h3), h_to_bar(h4), h_to_bar(h5))
         line2 = line2.replace('-1', '--')
 
         line1 = list(line1)
         line2 = list(line2)
-        #如果当前位置是SHT20测得，后面加个点
-        for count,i in enumerate(ret_marker):
+        # 如果当前位置是SHT20测得，后面加个点
+        for count, i in enumerate(ret_marker):
             if i:
-                line1[2+count*3]="."
-                line2[2+count*3]="."
+                line1[2 + count * 3] = "."
+                line2[2 + count * 3] = "."
         line1 = "".join(line1)
         line2 = "".join(line2)
 
         if cycle_count % 2 == 0:
-            line3 = "CO2 %s. VOC %s" % (CO2, VOC)
+            line3 = "CO2  %s.VOC  %s" % (CO2, VOC)
         else:
-            line3 = "CO2 %s  VOC %s" % (CO2, VOC)
+            line3 = "CO2  %s VOC  %s" % (CO2, VOC)
 
-        time_since_feed = read_time_since_feed()
-        time_since_water = read_time_since_water()
+        time_since_feed = get_time_since_feed_s()
+        time_since_water = get_time_since_water_s()
 
-
-        fed_text = show_time(time_since_feed, prefix="Fed")
-        if len(fed_text)==9 and "Fed " not in fed_text:
-            fed_text = fed_text.replace('Fed',"Fed ")
+        if fed_time_is_RTC:
+            fed_text = show_time(time_since_feed, prefix="Fed:")
         else:
-            fed_text += " "
+            fed_text = show_time(time_since_feed, prefix="Fed ")
 
-        if cycle_count % 2 == 0 and time_since_water>86400*3: # 换水超过3天时闪烁警示
-            line4 = fed_text + " " + show_time(time_since_water, prefix="H2O", flash=True)
+        if water_time_is_RTC:
+            water_text = show_time(time_since_water, prefix="H2O:", flash=(cycle_count % 2 == 0 and time_since_water > 86400 * 1.5))
         else:
-            line4 = fed_text + " " + show_time(time_since_water, prefix="H2O")
+            water_text = show_time(time_since_water, prefix="H2O ", flash=(cycle_count % 2 == 0 and time_since_water > 86400 * 1.5))
 
-
+        line4 = fed_text + water_text
         line4 = line4 + " " * (20 - len(line4)) if len(line4) < 20 else line4
 
-        # print(4, time.ticks_ms())
-
-        # 如果有气温传感器超出绝对安全范围（18~32.5），给出发光警告
+        # 如果有气温传感器超出绝对安全范围（18~35），给出发光警告
         temp_list = [x for x in [t1, t2, t3, t4, t5] if x != -1]
-        if temp_list and cycle_count % 2 == 0 and (max(temp_list) > 32.5 or min(temp_list) < 18):
+        temp_warning = False
+        if max(temp_list) > 35:
+            temp_warning = True
+        if min(temp_list) < 18:
+            temp_warning = True
+        # 如果>31°C的探头达到3个（晒点一个，热区一个，其他不应该超过31）
+        if len([x for x in temp_list if x>31])>=3:
+            temp_warning = True
+        # 如果全栖地超过30，Warning
+        if len([x for x in temp_list if x>30])==5:
+            temp_warning = True
+        if temp_list and cycle_count % 2 == 0 and temp_warning:
             line1 = chr(7) * 20
             line2 = chr(7) * 20
             line3 = chr(7) * 20
             line4 = chr(7) * 20
 
-        lcd.puts(line1)
-        lcd.puts(line2, 1)
-        lcd.puts(line3, 2)
-        lcd.puts(line4, 3)
+        line1 = line1 + " "*(20-len(line1)) if len(line1)<20 else line1
+        line2 = line2 + " "*(20-len(line2)) if len(line2)<20 else line2
+        line3 = line3 + " "*(20-len(line3)) if len(line3)<20 else line3
+        line4 = line4 + " "*(20-len(line4)) if len(line4)<20 else line4
 
-        #print(5, time.ticks_ms())
+        # print(11)
+        #TODO: 显示完 log 11 后 Mobaxterm 报错Error reading from serial device
+        try:
+            lcd.puts(line1[:20])
+            lcd.puts(line2[:20], 1)
+            lcd.puts(line3[:20], 2)
+            lcd.puts(line4[:20], 3)
+        except Exception as e:
+            log("LCD Error.")
+            time.sleep(2)
+            lcd = initiate_lcd()
 
+        # print(12)
+        screen_content_log = "--------------------\n" + \
+                             line1 + "\n" + \
+                             line2 + "\n" + \
+                             line3 + "\n" + \
+                             line4 + "\n" + \
+                             "--------------------\n"
+
+        # print(screen_content_log)
+
+        if cycle_count % 50 == 5:
+            log(screen_content_log)
+
+        # print(13)
+        # log(5, time.ticks_ms())
+
+        # HTML_server
+        # print("Waiting for html")
+        # cl, addr = s.accept()
+        # log('Client connected from', addr)
+        # req = cl.recv(1024)
+        # if req:
+        #     cl.send('HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
+        #     cl.send(screen_content_log + open(LOG_FILE).read())
+        # cl.close()
+        # time.sleep(10)
+
+        # log(12)
         # automatic reboot
-        if time.time() < last_reset_time:
-            last_reset_time = 0
-        if time.time() - last_reset_time > 2*3600:
-            # print(time.time(),last)
+        if boot_time_s() > 3600:
+            # log(boot_time_s(),last)
             save_machine_reset_time()
             machine.reset()
 

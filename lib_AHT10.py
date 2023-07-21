@@ -114,7 +114,13 @@ class AHT10:
         self._i2c.writeto(self._address, self._buf[0:3])
 
     def _wait_for_idle(self):
+        for _ in range(100):
+            if not (self.status & self.AHTX0_STATUS_BUSY):
+                break
+            utime.sleep_ms(5)
+        # 如果100次还没有ready, 每个cycle显示一下
         while self.status & self.AHTX0_STATUS_BUSY:
+            print("Waiting AHT10 Status")
             utime.sleep_ms(5)
 
     def _perform_measurement(self):

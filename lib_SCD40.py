@@ -36,9 +36,17 @@ class SCD4X:
         If failed, try again
         :return: (CO2, temp, humid)
         """
-        if self.data_ready:
-            self._read_data()
-            return self._co2,self._temperature,self._relative_humidity
+
+        # This for loop needs to exist otherwise the measurement will fail and a Nonetype can't be unpacked error will be given
+        for _ in range(10):
+            try:
+                if self.data_ready:
+                    self._read_data()
+                break
+            except OSError as e:
+                print("Measuring failed:")
+                print(e)
+        return self._co2,self._temperature,self._relative_humidity
 
     @property
     def co2(self):
