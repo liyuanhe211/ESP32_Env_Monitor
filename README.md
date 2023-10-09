@@ -59,3 +59,21 @@ Connect a Water Pushbutton between 13 and 3V3, pull down 13 with 2k resister
  - `[PCF8574-SDA] - [GPIO27]`
  - `[PCF8574] ≡ [LCD2004] follow PCF8574 chip instruction`
 
+
+ 
+---
+
+Light sub panel
+
+S9014, DC current gain = 280, 
+Collector-emitter voltage = 12 V
+IB = 0.1 ~ 0.16 mA
+Base-Emitter satuation current  = 600~800 mA
+
+Assuming IC = 100 mA
+Gain  = 50
+IB = 2 mA
+VB = 3 V
+RB = 1Kohm
+
+Using RB = 300 ohm
